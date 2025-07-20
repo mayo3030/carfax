@@ -57,11 +57,21 @@ def submit_vin():
         
         # Launch the CARFAX script with VIN
         try:
+            # Try the cross-platform version first
+            cross_platform_script = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), 
+                'scripts', 
+                'carfax_launcher_cross_platform.py'
+            )
+            
+            # Use cross-platform script if available, otherwise use original
+            script_to_use = cross_platform_script if os.path.exists(cross_platform_script) else script_path
+            
             result = subprocess.run([
                 sys.executable, 
-                script_path, 
+                script_to_use, 
                 vin
-            ], capture_output=True, text=True, timeout=30)
+            ], capture_output=True, text=True, timeout=30, check=False)
             
             if result.returncode == 0:
                 logger.info(f"Successfully launched CARFAX for VIN: {vin}")
@@ -69,23 +79,54 @@ def submit_vin():
                     "success": True,
                     "message": f"CARFAX launched successfully for VIN: {vin}",
                     "vin": vin,
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
+                    "script_used": os.path.basename(script_to_use)
                 })
             else:
-                logger.error(f"Error launching CARFAX: {result.stderr}")
+                # Provide detailed error information
+                error_details = {
+                    "return_code": result.returncode,
+                    "stdout": result.stdout.strip() if result.stdout else "",
+                    "stderr": result.stderr.strip() if result.stderr else "",
+                    "script_path": script_to_use
+                }
+                
+                logger.error(f"Error launching CARFAX: {error_details}")
+                
+                # Provide user-friendly error message
+                if "Chrome not found" in result.stderr:
+                    error_message = "Chrome browser not found. Please install Google Chrome."
+                elif "Profile directory not found" in result.stderr:
+                    error_message = "Chrome profile not found. Please check Chrome installation."
+                elif "Permission denied" in result.stderr:
+                    error_message = "Permission denied. Please run as administrator."
+                else:
+                    error_message = f"Failed to launch CARFAX: {result.stderr.strip()}"
+                
                 return jsonify({
-                    "error": f"Failed to launch CARFAX: {result.stderr}"
+                    "error": error_message,
+                    "details": error_details
                 }), 500
                 
         except subprocess.TimeoutExpired:
             logger.warning(f"Timeout launching CARFAX for VIN: {vin}")
             return jsonify({
-                "error": "Timeout launching CARFAX"
+                "error": "Timeout launching CARFAX. The script took too long to execute."
+            }), 500
+        except FileNotFoundError:
+            logger.error(f"Script not found: {script_to_use}")
+            return jsonify({
+                "error": "CARFAX launcher script not found. Please check installation."
+            }), 500
+        except PermissionError:
+            logger.error("Permission denied when launching script")
+            return jsonify({
+                "error": "Permission denied. Please run the application as administrator."
             }), 500
         except Exception as e:
             logger.error(f"Exception launching CARFAX: {e}")
             return jsonify({
-                "error": f"Exception launching CARFAX: {str(e)}"
+                "error": f"Unexpected error launching CARFAX: {str(e)}"
             }), 500
             
     except Exception as e:
